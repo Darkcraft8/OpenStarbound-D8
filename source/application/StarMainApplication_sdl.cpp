@@ -131,6 +131,15 @@ Maybe<Key> keyFromSdlKeyCode(SDL_Keycode sym) {
     {SDLK_F13, Key::F13},
     {SDLK_F14, Key::F14},
     {SDLK_F15, Key::F15},
+    {SDLK_F16, Key::F16},
+    {SDLK_F17, Key::F17},
+    {SDLK_F18, Key::F18},
+    {SDLK_F19, Key::F19},
+    {SDLK_F20, Key::F20},
+    {SDLK_F21, Key::F21},
+    {SDLK_F22, Key::F22},
+    {SDLK_F23, Key::F23},
+    {SDLK_F24, Key::F24},
     {SDLK_NUMLOCKCLEAR, Key::NumLock},
     {SDLK_CAPSLOCK, Key::CapsLock},
     {SDLK_SCROLLLOCK, Key::ScrollLock},
@@ -235,7 +244,9 @@ public:
       SDL_free(basePath);
     }
 
+#if SDL_VERSION_ATLEAST(2, 0, 18)
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+#endif
 
     m_signalHandler.setHandleInterrupt(true);
     m_signalHandler.setHandleFatal(true);
@@ -303,6 +314,10 @@ public:
     int height;
     SDL_GetWindowSize(m_sdlWindow, &width, &height);
     m_windowSize = Vec2U(width, height);
+    
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
     m_sdlGlContext = SDL_GL_CreateContext(m_sdlWindow);
     if (!m_sdlGlContext)

@@ -686,10 +686,11 @@ void ClientApplication::setError(String const& error, std::exception const& e) {
 void ClientApplication::updateMods(float dt) {
   m_cinematicOverlay->update(dt);
   auto ugcService = appController()->userGeneratedContentService();
-  if (ugcService) {
+  if (ugcService && m_root->settings().includeUGC) {
+    Logger::info("Checking for user generated content...");
     if (ugcService->triggerContentDownload()) {
       StringList modDirectories;
-      for (auto contentId : ugcService->subscribedContentIds()) {
+      for (auto& contentId : ugcService->subscribedContentIds()) {
         if (auto contentDirectory = ugcService->contentDownloadDirectory(contentId)) {
           Logger::info("Loading mods from user generated content with id '{}' from directory '{}'", contentId, *contentDirectory);
           modDirectories.append(*contentDirectory);
@@ -896,9 +897,9 @@ void ClientApplication::updateRunning(float dt) {
       config->set("zoomLevel", newZoom);
     }
 
-    if (m_controllerLeftStick.magnitudeSquared() > 0.001f)
-      m_player->setMoveVector(m_controllerLeftStick);
-    else
+    //if (m_controllerLeftStick.magnitudeSquared() > 0.001f)
+    //  m_player->setMoveVector(m_controllerLeftStick);
+    //else
       m_player->setMoveVector(Vec2F());
 
     m_voice->setInput(m_input->bindHeld("opensb", "pushToTalk"));

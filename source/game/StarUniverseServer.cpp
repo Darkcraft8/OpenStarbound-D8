@@ -735,7 +735,7 @@ void UniverseServer::kickErroredPlayers() {
   for (auto const& worldId : m_worlds.keys()) {
     if (auto world = getWorld(worldId)) {
       for (auto clientId : world->erroredClients())
-        m_pendingDisconnections.add(clientId, "Incoming client packet has caused exception");
+        m_pendingDisconnections[clientId] = "Incoming client packet has caused exception";
     }
   }
 }
@@ -835,7 +835,7 @@ void UniverseServer::warpPlayers() {
           // Checking the spawn target validity then adding the client is not
           // perfect, it can still become invalid in between, if we fail at
           // adding the client we need to warp them back.
-          if (toWorld && toWorld->addClient(clientId, warpToWorld.target, !clientContext->remoteAddress())) {
+          if (toWorld && toWorld->addClient(clientId, warpToWorld.target, !clientContext->remoteAddress(), clientContext->canBecomeAdmin())) {
             clientContext->setPlayerWorld(toWorld);
             m_chatProcessor->joinChannel(clientId, printWorldId(warpToWorld.world));
 
@@ -1679,6 +1679,7 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   auto clientContext = make_shared<ServerClientContext>(clientId, remoteAddress, clientConnect->playerUuid,
       clientConnect->playerName, clientConnect->playerSpecies, administrator, clientConnect->shipChunks);
   m_clients.add(clientId, clientContext);
+  m_connectionServer->addConnection(clientId, std::move(connection));
   clientsLocker.unlock();
 
   clientContext->registerRpcHandlers(m_teamManager->rpcHandlers());
@@ -1700,8 +1701,6 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
     clientContext->setAdmin(false);
 
   clientContext->setShipUpgrades(clientConnect->shipUpgrades);
-
-  m_connectionServer->addConnection(clientId, std::move(connection));
   m_chatProcessor->connectClient(clientId, clientConnect->playerName);
 
   m_connectionServer->sendPackets(clientId, {
@@ -1714,8 +1713,9 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
 
   Vec3I location = clientContext->shipCoordinate().location();
   if (location != Vec3I()) {
-    auto clientSystem = createSystemWorld(clientContext->shipCoordinate().location());
+    auto clientSystem = createSystemWorld(location);
     clientSystem->addClient(clientId, clientContext->playerUuid(), clientContext->shipUpgrades().shipSpeed, clientContext->shipLocation());
+    addCelestialRequests(clientId, {makeLeft(location.vec2()), makeRight(location)});
     clientContext->setSystemWorld(clientSystem);
   }
 

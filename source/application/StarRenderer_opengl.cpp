@@ -8,7 +8,7 @@ namespace Star {
 size_t const MultiTextureCount = 4;
 
 char const* DefaultVertexShader = R"SHADER(
-#version 130
+#version 140
 
 uniform vec2 textureSize0;
 uniform vec2 textureSize1;
@@ -49,7 +49,7 @@ void main() {
 )SHADER";
 
 char const* DefaultFragmentShader = R"SHADER(
-#version 130
+#version 140
 
 uniform sampler2D texture0;
 uniform sampler2D texture1;
@@ -65,13 +65,13 @@ out vec4 outColor;
 void main() {
   vec4 texColor;
   if (fragmentTextureIndex == 3)
-    texColor = texture2D(texture3, fragmentTextureCoordinate);
+    texColor = texture(texture3, fragmentTextureCoordinate);
   else if (fragmentTextureIndex == 2)
-    texColor = texture2D(texture2, fragmentTextureCoordinate);
+    texColor = texture(texture2, fragmentTextureCoordinate);
   else if (fragmentTextureIndex == 1)
-    texColor = texture2D(texture1, fragmentTextureCoordinate);
+    texColor = texture(texture1, fragmentTextureCoordinate);
   else
-    texColor = texture2D(texture0, fragmentTextureCoordinate);
+    texColor = texture(texture0, fragmentTextureCoordinate);
 
   if (texColor.a <= 0.0)
     discard;
@@ -79,6 +79,15 @@ void main() {
   outColor = texColor * fragmentColor;
 }
 )SHADER";
+
+/*
+static void GLAPIENTRY GlMessageCallback(GLenum, GLenum type, GLuint, GLenum, GLsizei, const GLchar* message, const void* renderer) {
+  if (type == GL_DEBUG_TYPE_ERROR) {
+    Logger::error("GL ERROR: {}", message);
+    __debugbreak();
+  }
+}
+*/
 
 OpenGlRenderer::OpenGlRenderer() {
   if (glewInit() != GLEW_OK)
@@ -94,10 +103,11 @@ OpenGlRenderer::OpenGlRenderer() {
       (const char*)glGetString(GL_SHADING_LANGUAGE_VERSION));
 
   glClearColor(0.0, 0.0, 0.0, 1.0);
-  glEnable(GL_TEXTURE_2D);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDisable(GL_DEPTH_TEST);
+  //glEnable(GL_DEBUG_OUTPUT);
+  //glDebugMessageCallback(GlMessageCallback, this);
 
   m_whiteTexture = createGlTexture(Image::filled({1, 1}, Vec4B(255, 255, 255, 255), PixelFormat::RGBA32),
       TextureAddressing::Clamp,
@@ -254,7 +264,7 @@ void OpenGlRenderer::loadEffectConfig(String const& name, Json const& effectConf
 
     effectParameter.parameterUniform = glGetUniformLocation(m_program, p.second.getString("uniform").utf8Ptr());
     if (effectParameter.parameterUniform == -1) {
-      Logger::warn("OpenGL20 effect parameter '{}' has no associated uniform, skipping", p.first);
+      Logger::warn("OpenGL20 effect parameter '{}' in effect '{}' has no associated uniform, skipping", p.first, name);
     } else {
       String type = p.second.getString("type");
       if (type == "bool") {
@@ -694,6 +704,10 @@ Vec2U OpenGlRenderer::GlLoneTexture::glTextureCoordinateOffset() const {
   return Vec2U();
 }
 
+OpenGlRenderer::GlRenderBuffer::GlRenderBuffer() {
+  glGenVertexArrays(1, &vertexArray);
+}
+
 OpenGlRenderer::GlRenderBuffer::~GlRenderBuffer() {
   for (auto const& texture : usedTextures) {
     if (auto gt = as<GlGroupedTexture>(texture.get()))
@@ -701,6 +715,7 @@ OpenGlRenderer::GlRenderBuffer::~GlRenderBuffer() {
   }
   for (auto const& vb : vertexBuffers)
     glDeleteBuffers(1, &vb.vertexBuffer);
+  glDeleteVertexArrays(1, &vertexArray);
 }
 
 void OpenGlRenderer::GlRenderBuffer::set(List<RenderPrimitive>& primitives) {
@@ -715,7 +730,7 @@ void OpenGlRenderer::GlRenderBuffer::set(List<RenderPrimitive>& primitives) {
   List<GLuint> currentTextures;
   List<Vec2U> currentTextureSizes;
   size_t currentVertexCount = 0;
-
+  glBindVertexArray(vertexArray);
   auto finishCurrentBuffer = [&]() {
     if (currentVertexCount > 0) {
       GlVertexBuffer vb;
