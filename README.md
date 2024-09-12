@@ -1,4 +1,5 @@
 # Darkcraft8 Fork of OpenStarbound
+ Fork Status : On Hold
  current plan :
  change/patch the rarity border so that it search for an image path and other specific needed to allow for modder to easily add new rarity "and also add a perfectly generic rarity in case of problem"
  try to change a bit the character creation screen "change from catButton to list and maybe add more choice of start equip like headwear and backwear ?"
