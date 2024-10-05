@@ -136,6 +136,8 @@ endif()
 
 option(STAR_LUA_APICHECK "Use lua api checks" OFF)
 option(STAR_USE_JEMALLOC "Use jemalloc allocators" OFF)
+option(STAR_USE_MIMALLOC "Use mimalloc allocators" OFF)
+option(STAR_USE_RPMALLOC "Use rpmalloc allocators" OFF)
 
 # Report all the discovered system / environment settings and all options.
 
@@ -174,6 +176,8 @@ endif()
 
 message(STATUS "Using Lua API checks: ${STAR_LUA_APICHECK}")
 message(STATUS "Using jemalloc: ${STAR_USE_JEMALLOC}")
+message(STATUS "Using mimalloc: ${STAR_USE_MIMALLOC}")
+message(STATUS "Using rpmalloc: ${STAR_USE_RPMALLOC}")
 
 # Set C defines and cmake variables based on the build settings we have now
 # determined...
@@ -244,6 +248,10 @@ endif()
 
 if(STAR_USE_JEMALLOC)
   add_definitions(-DSTAR_USE_JEMALLOC)
+elseif(STAR_USE_MIMALLOC)
+  add_definitions(-DSTAR_USE_MIMALLOC)
+elseif(STAR_USE_RPMALLOC)
+  add_definitions(-DSTAR_USE_RPMALLOC -DENABLE_PRELOAD)
 endif()
 
 # Set C/C++ compiler flags based on build environment...
@@ -447,6 +455,11 @@ if(STAR_USE_JEMALLOC)
 
   include_directories(SYSTEM ${JEMALLOC_INCLUDE_DIR})
   set(STAR_EXT_LIBS ${JEMALLOC_LIBRARY})
+endif()
+
+if (STAR_USE_MIMALLOC)
+  find_package(mimalloc CONFIG REQUIRED)
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} $<IF:$<TARGET_EXISTS:mimalloc-static>,mimalloc-static,mimalloc>)
 endif()
 
 find_package(ZLIB REQUIRED)

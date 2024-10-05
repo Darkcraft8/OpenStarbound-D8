@@ -66,6 +66,9 @@ Maybe<PacketStats> PacketSocket::outgoingStats() const {
 void PacketSocket::setLegacy(bool legacy) { m_legacy = legacy; }
 bool PacketSocket::legacy() const { return m_legacy; }
 
+void CompressedPacketSocket::setCompressionStreamEnabled(bool enabled) { m_useCompressionStream = enabled; }
+bool CompressedPacketSocket::compressionStreamEnabled() const { return m_useCompressionStream; }
+
 pair<LocalPacketSocketUPtr, LocalPacketSocketUPtr> LocalPacketSocket::openPair() {
   auto lhsIncomingPipe = make_shared<Pipe>();
   auto rhsIncomingPipe = make_shared<Pipe>();
@@ -146,7 +149,7 @@ void TcpPacketSocket::close() {
 
 void TcpPacketSocket::sendPackets(List<PacketPtr> packets) {
   auto it = makeSMutableIterator(packets);
-  if (m_useCompressionStream) {
+  if (compressionStreamEnabled()) {
     DataStreamBuffer outBuffer;
     while (it.hasNext()) {
       PacketPtr& packet = it.next();
@@ -233,7 +236,7 @@ List<PacketPtr> TcpPacketSocket::receivePackets() {
       if (packetSize > ds.remaining())
         break;
 
-      m_incomingStats.mix(packetType, packetSize, !m_useCompressionStream);
+      m_incomingStats.mix(packetType, packetSize, !compressionStreamEnabled());
 
       DataStreamExternalBuffer packetStream(ds.ptr() + ds.pos(), packetSize);
       ByteArray uncompressed;
@@ -280,17 +283,17 @@ bool TcpPacketSocket::writeData() {
   bool dataSent = false;
   try {
     if (!m_outputBuffer.empty()) {
-      if (m_useCompressionStream) {
-        auto compressed = m_compressionStream.compress(m_outputBuffer);
+      if (compressionStreamEnabled()) {
+        auto compressedBuffer = m_compressionStream.compress(m_outputBuffer);
         m_outputBuffer.clear();
-
-        m_compressedBuffer.append(compressed.ptr(), compressed.size());
-        size_t written = m_socket->send(m_compressedBuffer.ptr(), m_compressedBuffer.size());
-        if (written > 0) {
-          dataSent = true;
-          m_compressedBuffer.trimLeft(written);
-          m_outgoingStats.mix(written);
-        }
+        do {
+          size_t written = m_socket->send(compressedBuffer.ptr(), compressedBuffer.size());
+          if (written > 0) {
+            dataSent = true;
+            compressedBuffer.trimLeft(written);
+            m_outgoingStats.mix(written);
+          }
+        } while (!compressedBuffer.empty());
       } else {
         do {
           size_t written = m_socket->send(m_outputBuffer.ptr(), m_outputBuffer.size());
@@ -319,10 +322,10 @@ bool TcpPacketSocket::readData() {
       if (readAmount == 0)
         break;
       dataReceived = true;
-      if (m_useCompressionStream) {
+      if (compressionStreamEnabled()) {
         m_incomingStats.mix(readAmount);
         auto decompressed = m_decompressionStream.decompress(readBuffer, readAmount);
-        m_inputBuffer.append(decompressed.ptr(), decompressed.size());
+        m_inputBuffer.append(decompressed);
       } else {
         m_inputBuffer.append(readBuffer, readAmount);
       }
@@ -345,7 +348,6 @@ Maybe<PacketStats> TcpPacketSocket::outgoingStats() const {
 }
 
 void TcpPacketSocket::setLegacy(bool legacy) {
-  m_useCompressionStream = !legacy;
   PacketSocket::setLegacy(legacy);
 }
 
@@ -366,43 +368,58 @@ void P2PPacketSocket::close() {
 void P2PPacketSocket::sendPackets(List<PacketPtr> packets) {
   auto it = makeSMutableIterator(packets);
 
-  while (it.hasNext()) {
-    PacketType currentType = it.peekNext()->type();
-    PacketCompressionMode currentCompressionMode = it.peekNext()->compressionMode();
-
-    DataStreamBuffer packetBuffer;
-    while (it.hasNext()
-      && it.peekNext()->type() == currentType
-      && it.peekNext()->compressionMode() == currentCompressionMode) {
-      if (legacy())
-        it.next()->writeLegacy(packetBuffer);
-      else
-        it.next()->write(packetBuffer);
-    }
-
-    // Packets must read and write actual data, because this is used to
-    // determine packet count
-    starAssert(!packetBuffer.empty());
-
-    ByteArray compressedPackets;
-    bool mustCompress = currentCompressionMode == PacketCompressionMode::Enabled;
-    bool perhapsCompress = currentCompressionMode == PacketCompressionMode::Automatic && packetBuffer.size() > 64;
-    if (mustCompress || perhapsCompress)
-      compressedPackets = compressData(packetBuffer.data());
-
+  if (compressionStreamEnabled()) {
     DataStreamBuffer outBuffer;
-    outBuffer.write(currentType);
-
-    if (!compressedPackets.empty() && (mustCompress || compressedPackets.size() < packetBuffer.size())) {
-      outBuffer.write<bool>(true);
-      outBuffer.writeData(compressedPackets.ptr(), compressedPackets.size());
-      m_outgoingStats.mix(currentType, compressedPackets.size());
-    } else {
+    while (it.hasNext()) {
+      PacketType currentType = it.peekNext()->type();
+      DataStreamBuffer packetBuffer;
+      while (it.hasNext() && it.peekNext()->type() == currentType)
+        it.next()->write(packetBuffer);
+      outBuffer.write(currentType);
       outBuffer.write<bool>(false);
       outBuffer.writeData(packetBuffer.ptr(), packetBuffer.size());
-      m_outgoingStats.mix(currentType, packetBuffer.size());
+      m_outgoingStats.mix(currentType, packetBuffer.size(), false);
+      m_outputMessages.append(m_compressionStream.compress(outBuffer.takeData()));
     }
-    m_outputMessages.append(outBuffer.takeData());
+  } else {
+    while (it.hasNext()) {
+      PacketType currentType = it.peekNext()->type();
+      PacketCompressionMode currentCompressionMode = it.peekNext()->compressionMode();
+
+      DataStreamBuffer packetBuffer;
+      while (it.hasNext()
+             && it.peekNext()->type() == currentType
+             && it.peekNext()->compressionMode() == currentCompressionMode) {
+        if (legacy())
+          it.next()->writeLegacy(packetBuffer);
+        else
+          it.next()->write(packetBuffer);
+      }
+
+      // Packets must read and write actual data, because this is used to
+      // determine packet count
+      starAssert(!packetBuffer.empty());
+
+      ByteArray compressedPackets;
+      bool mustCompress = currentCompressionMode == PacketCompressionMode::Enabled;
+      bool perhapsCompress = currentCompressionMode == PacketCompressionMode::Automatic && packetBuffer.size() > 64;
+      if (mustCompress || perhapsCompress)
+        compressedPackets = compressData(packetBuffer.data());
+
+      DataStreamBuffer outBuffer;
+      outBuffer.write(currentType);
+
+      if (!compressedPackets.empty() && (mustCompress || compressedPackets.size() < packetBuffer.size())) {
+        outBuffer.write<bool>(true);
+        outBuffer.writeData(compressedPackets.ptr(), compressedPackets.size());
+        m_outgoingStats.mix(currentType, compressedPackets.size());
+      } else {
+        outBuffer.write<bool>(false);
+        outBuffer.writeData(packetBuffer.ptr(), packetBuffer.size());
+        m_outgoingStats.mix(currentType, packetBuffer.size());
+      }
+      m_outputMessages.append(outBuffer.takeData());
+    }
   }
 }
 
@@ -420,9 +437,9 @@ List<PacketPtr> P2PPacketSocket::receivePackets() {
       if (packetCompressed)
         packetBytes = uncompressData(packetBytes);
 
-      m_incomingStats.mix(packetType, packetSize);
+      m_incomingStats.mix(packetType, packetSize, !compressionStreamEnabled());
 
-      DataStreamBuffer packetStream(std::move(packetBytes));
+      DataStreamExternalBuffer packetStream(packetBytes);
       do {
         PacketPtr packet = createPacket(packetType);
         packet->setCompressionMode(packetCompressed ? PacketCompressionMode::Enabled : PacketCompressionMode::Disabled);
@@ -450,6 +467,7 @@ bool P2PPacketSocket::writeData() {
   if (m_socket) {
     while (!m_outputMessages.empty()) {
       if (m_socket->sendMessage(m_outputMessages.first())) {
+        m_outgoingStats.mix(m_outputMessages.first().size());
         m_outputMessages.removeFirst();
         workDone = true;
       } else {
@@ -466,7 +484,10 @@ bool P2PPacketSocket::readData() {
 
   if (m_socket) {
     while (auto message = m_socket->receiveMessage()) {
-      m_inputMessages.append(message.take());
+      m_incomingStats.mix(message->size());
+      m_inputMessages.append(compressionStreamEnabled()
+        ? m_decompressionStream.decompress(*message)
+        : *message);
       workDone = true;
     }
   }

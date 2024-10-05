@@ -301,20 +301,19 @@ void ClientApplication::processInput(InputEvent const& event) {
       m_controllerRightStick[1] = cAxis->controllerAxisValue;
   }
 
-  if (!m_errorScreen->accepted() && m_errorScreen->handleInputEvent(event))
-    return;
+  bool processed = !m_errorScreen->accepted() && m_errorScreen->handleInputEvent(event);
 
-  bool processed = false;
+  if (!processed) {
+    if (m_state == MainAppState::Splash) {
+      processed = m_cinematicOverlay->handleInputEvent(event);
+    } else if (m_state == MainAppState::Title) {
+      if (!(processed = m_cinematicOverlay->handleInputEvent(event)))
+        processed = m_titleScreen->handleInputEvent(event);
 
-  if (m_state == MainAppState::Splash) {
-    processed = m_cinematicOverlay->handleInputEvent(event);
-  } else if (m_state == MainAppState::Title) {
-    if (!(processed = m_cinematicOverlay->handleInputEvent(event)))
-      processed = m_titleScreen->handleInputEvent(event);
-
-  } else if (m_state == MainAppState::SinglePlayer || m_state == MainAppState::MultiPlayer) {
-    if (!(processed = m_cinematicOverlay->handleInputEvent(event)))
-      processed = m_mainInterface->handleInputEvent(event);
+    } else if (m_state == MainAppState::SinglePlayer || m_state == MainAppState::MultiPlayer) {
+      if (!(processed = m_cinematicOverlay->handleInputEvent(event)))
+        processed = m_mainInterface->handleInputEvent(event);
+    }
   }
 
   m_input->handleInput(event, processed);
@@ -361,7 +360,7 @@ void ClientApplication::update() {
 
   m_guiContext->cleanup();
   m_edgeKeyEvents.clear();
-  m_input->reset();
+  m_input->update();
 }
 
 void ClientApplication::render() {
@@ -401,6 +400,17 @@ void ClientApplication::render() {
       });
       LogMap::set("client_render_world_painter", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - paintStart));
       LogMap::set("client_render_world_total", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - totalStart));
+      
+      auto size = Vec2F(renderer->screenSize());
+      auto quad = renderFlatRect(RectF::withSize(size / -2, size), Vec4B::filled(0), 0.0f);
+      for (auto& layer : m_postProcessLayers) {
+        for (unsigned i = 0; i < layer.passes; i++) {
+          for (auto& effect : layer.effects) {
+            renderer->switchEffectConfig(effect);
+            renderer->render(quad);
+          }
+        }
+      }
     }
     renderer->switchEffectConfig("interface");
     auto start = Time::monotonicMicroseconds();
@@ -450,8 +460,18 @@ void ClientApplication::renderReload() {
   };
 
   renderer->loadConfig(assets->json("/rendering/opengl.config"));
-
+  
   loadEffectConfig("world");
+  
+  m_postProcessLayers.clear();
+  auto postProcessLayers = assets->json("/client.config:postProcessLayers").toArray();
+  for (auto& layer : postProcessLayers) {
+    auto effects = jsonToStringList(layer.getArray("effects"));
+    for (auto& effect : effects)
+      loadEffectConfig(effect);
+    m_postProcessLayers.append(PostProcessLayer{ std::move(effects), (unsigned)layer.getUInt("passes", 1) });
+  }
+
   loadEffectConfig("interface");
 }
 
@@ -585,6 +605,7 @@ void ClientApplication::changeState(MainAppState newState) {
     m_mainMixer->setUniverseClient(m_universeClient);
     m_universeClient->setMainPlayer(m_player);
     m_cinematicOverlay->setPlayer(m_player);
+    m_timeSinceJoin = (int64_t)Time::millisecondsSinceEpoch() / 1000;
 
     auto assets = m_root->assets();
     String loadingCinematic = assets->json("/client.config:loadingCinematic").toString();
@@ -749,8 +770,36 @@ void ClientApplication::updateTitle(float dt) {
   appController()->setAcceptingTextInput(m_titleScreen->textInputActive());
 
   auto p2pNetworkingService = appController()->p2pNetworkingService();
-  if (p2pNetworkingService)
-    p2pNetworkingService->setActivityData("In Main Menu", {});
+  if (p2pNetworkingService) {
+    auto getStateString = [](TitleState state) -> const char* {
+      switch (state) {
+        case TitleState::Main:
+          return "In Main Menu";
+        case TitleState::Options:
+          return "In Options";
+        case TitleState::Mods:
+          return "In Mods";
+        case TitleState::SinglePlayerSelectCharacter:
+          return "Selecting a character for singleplayer";
+        case TitleState::SinglePlayerCreateCharacter:
+          return "Creating a character for singleplayer";
+        case TitleState::MultiPlayerSelectCharacter:
+          return "Selecting a character for multiplayer";
+        case TitleState::MultiPlayerCreateCharacter:
+          return "Creating a character for multiplayer";
+        case TitleState::MultiPlayerConnect:
+          return "Awaiting multiplayer connection info";
+        case TitleState::StartSinglePlayer:
+          return "Loading Singleplayer";
+        case TitleState::StartMultiPlayer:
+          return "Connecting to Multiplayer";
+        default:
+          return "";
+      }
+    };
+
+    p2pNetworkingService->setActivityData("Not In Game", getStateString(m_titleScreen->currentState()), 0, {});
+  }
 
   if (m_titleScreen->currentState() == TitleState::StartSinglePlayer) {
     changeState(MainAppState::SinglePlayer);
@@ -792,6 +841,7 @@ void ClientApplication::updateTitle(float dt) {
 
 void ClientApplication::updateRunning(float dt) {
   try {
+    auto worldClient = m_universeClient->worldClient();
     auto p2pNetworkingService = appController()->p2pNetworkingService();
     bool clientIPJoinable = m_root->configuration()->get("clientIPJoinable").toBool();
     bool clientP2PJoinable = m_root->configuration()->get("clientP2PJoinable").toBool();
@@ -818,8 +868,54 @@ void ClientApplication::updateRunning(float dt) {
       }
     }
     
-    if (p2pNetworkingService)
-      p2pNetworkingService->setActivityData("In Game", party);
+    if (p2pNetworkingService) {
+      auto getActivityDetail = [&](String const& tag) -> String {
+        if (tag == "playerName")
+          return Text::stripEscapeCodes(m_player->name());
+        if (tag == "playerHealth")
+          return toString(m_player->health());
+        if (tag == "playerMaxHealth")
+          return toString(m_player->maxHealth());
+        if (tag == "playerEnergy")
+          return toString(m_player->energy());
+        if (tag == "playerMaxEnergy")
+          return toString(m_player->maxEnergy());
+        if (tag == "playerBreath")
+          return toString(m_player->breath());
+        if (tag == "playerMaxBreath")
+          return toString(m_player->maxBreath());
+        if (tag == "playerXPos")
+          return toString(round(m_player->position().x()));
+        if (tag == "playerYPos")
+          return toString(round(m_player->position().y()));
+        if (tag == "worldName") {
+          if (m_universeClient->clientContext()->playerWorldId().is<ClientShipWorldId>())
+            return "Player Ship";
+          else if (WorldTemplate const* worldTemplate = worldClient ? worldClient->currentTemplate().get() : nullptr) {
+            auto worldName = worldTemplate->worldName();
+            if (worldName.empty())
+              return "In World";
+            else
+              return Text::stripEscapeCodes(worldName);
+          }
+          else
+            return "Nowhere";
+        }
+        return "";
+      };
+
+      String finalDetails = "";
+      Json activityDetails = m_root->configuration()->getPath("discord.activityDetails");
+      if (activityDetails.isType(Json::Type::Array)) {
+        StringList detailsList;
+        for (auto& detail : activityDetails.iterateArray())
+          detailsList.append(getActivityDetail(*detail.stringPtr()));
+        finalDetails = detailsList.join("\n");
+      } else if (activityDetails.isType(Json::Type::String))
+        finalDetails = activityDetails.toString().lookupTags(getActivityDetail);
+
+      p2pNetworkingService->setActivityData("In Game", finalDetails.utf8Ptr(), m_timeSinceJoin, party);
+    }
 
     if (!m_mainInterface->inputFocus() && !m_cinematicOverlay->suppressInput()) {
       m_player->setShifting(isActionTaken(InterfaceAction::PlayerShifting));
@@ -897,9 +993,9 @@ void ClientApplication::updateRunning(float dt) {
       config->set("zoomLevel", newZoom);
     }
 
-    //if (m_controllerLeftStick.magnitudeSquared() > 0.001f)
-    //  m_player->setMoveVector(m_controllerLeftStick);
-    //else
+    if (m_controllerLeftStick.magnitudeSquared() > 0.01f)
+      m_player->setMoveVector(m_controllerLeftStick);
+    else
       m_player->setMoveVector(Vec2F());
 
     m_voice->setInput(m_input->bindHeld("opensb", "pushToTalk"));
@@ -933,7 +1029,7 @@ void ClientApplication::updateRunning(float dt) {
     if (checkDisconnection())
       return;
 
-    if (auto worldClient = m_universeClient->worldClient()) {
+    if (worldClient) {
       m_worldPainter->update(dt);
       auto& broadcastCallback = worldClient->broadcastCallback();
       if (!broadcastCallback) {

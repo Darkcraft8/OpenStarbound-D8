@@ -68,7 +68,7 @@ static void validatePath(AssetPath const& components, bool canContainSubPath, bo
     throw AssetException::format("Path '{}' cannot contain directives", components);
 }
 
-static void validatePath(StringView const& path, bool canContainSubPath, bool canContainDirectives) {
+static void validatePath(StringView path, bool canContainSubPath, bool canContainDirectives) {
   std::string_view const& str = path.utf8();
 
   size_t end = str.find_first_of(":?");
@@ -102,6 +102,14 @@ Maybe<RectU> FramesSpecification::getRect(String const& frame) const {
   }
 }
 
+Json FramesSpecification::toJson() const {
+  return JsonObject{
+    {"aliases", jsonFromMap(aliases)},
+    {"frames", jsonFromMapV(frames, jsonFromRectU)},
+    {"file", framesFile}
+  };
+}
+
 Assets::Assets(Settings settings, StringList assetSources) {
   const char* AssetsPatchSuffix = ".patch";
   const char* AssetsPatchListSuffix = ".patchlist";
@@ -124,6 +132,7 @@ Assets::Assets(Settings settings, StringList assetSources) {
     LuaCallbacks callbacks;
     callbacks.registerCallbackWithSignature<StringSet, String>("byExtension", bind(&Assets::scanExtension, this, _1));
     callbacks.registerCallbackWithSignature<Json, String>("json", bind(&Assets::json, this, _1));
+    callbacks.registerCallbackWithSignature<bool, String>("exists", bind(&Assets::assetExists, this, _1));
 
     callbacks.registerCallback("bytes", [this](String const& path) -> String {
       auto assetBytes = bytes(path);
@@ -136,6 +145,12 @@ Assets::Assets(Settings settings, StringList assetSources) {
         return assetImage->convert(PixelFormat::RGBA32);
       else
         return *assetImage;
+    });
+
+    callbacks.registerCallback("frames", [this](String const& path) -> Json {
+      if (auto frames = imageFrames(path))
+        return frames->toJson();
+      return Json();
     });
 
     callbacks.registerCallback("scan", [this](Maybe<String> const& a, Maybe<String> const& b) -> StringList {
@@ -1241,7 +1256,7 @@ shared_ptr<Assets::AssetData> Assets::loadImage(AssetPath const& path) const {
 shared_ptr<Assets::AssetData> Assets::loadAudio(AssetPath const& path) const {
   return unlockDuring([&]() {
     auto newData = make_shared<AudioData>();
-    newData->audio = make_shared<Audio>(open(path.basePath));
+    newData->audio = make_shared<Audio>(open(path.basePath), path.basePath);
     newData->needsPostProcessing = newData->audio->compressed();
     return newData;
   });

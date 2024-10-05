@@ -781,19 +781,14 @@ void PlayerInventory::load(Json const& store) {
 
   //reuse ItemBags so the Inventory pane still works after load()'ing into the same PlayerInventory again (from swap)
   auto itemBags = store.get("itemBags").toObject();
-  eraseWhere(m_bags, [&](auto const& p) { return !itemBags.contains(p.first); });
   m_inventoryLoadOverflow.clear();
   for (auto const& p : itemBags) {
     auto& bagType = p.first;
     auto newBag = ItemBag::loadStore(p.second);
     if (m_bags.contains(bagType)) {
-      auto& bag = m_bags[bagType];
-      auto size = bag->size();
-      if (bag)
-        *bag = std::move(newBag);
-      else
-        bag = make_shared<ItemBag>(std::move(newBag));
-      m_inventoryLoadOverflow.appendAll(bag->resize(size));
+      auto& bag = m_bags.at(bagType);
+      m_inventoryLoadOverflow.appendAll(newBag.resize(bag->size()));
+      *bag = std::move(newBag);
     } else {
       m_inventoryLoadOverflow.appendAll(newBag.items());
     }
@@ -1008,12 +1003,15 @@ ItemPtr& PlayerInventory::retrieve(InventorySlot const& slot) {
 
   if (auto es = slot.ptr<EquipmentSlot>())
     return guardEmpty(m_equipment[*es]);
-  else if (auto bs = slot.ptr<BagSlot>())
-    return guardEmpty(m_bags[bs->first]->at(bs->second));
-  else if (slot.is<SwapSlot>())
+  else if (auto bs = slot.ptr<BagSlot>()) {
+    if (auto bag = m_bags.ptr(bs->first))
+      return guardEmpty((*bag)->at(bs->second));
+  } else if (slot.is<SwapSlot>())
     return guardEmpty(m_swapSlot);
   else
     return guardEmpty(m_trashSlot);
+
+  throw ItemException::format("Invalid inventory slot {}", jsonFromInventorySlot(slot));
 }
 
 void PlayerInventory::swapCustomBarLinks(InventorySlot a, InventorySlot b) {

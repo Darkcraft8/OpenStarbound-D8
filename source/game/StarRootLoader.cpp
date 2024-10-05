@@ -76,6 +76,9 @@ R"JSON(
       "allowAdminCommands" : true,
       "allowAdminCommandsFromAnyone" : false,
       "anonymousConnectionsAreAdmin" : false,
+      "connectionSettings" : {
+        "compression" : "Zstd"
+      },
 
       "clientP2PJoinable" : true,
       "clientIPJoinable" : false,
@@ -96,6 +99,10 @@ R"JSON(
 
       "inventory" : {
         "pickupToActionBar" : true
+      },
+
+      "discord" : {
+        "activityDetails" : "<playerName> | <worldName>"
       }
     }
   )JSON");

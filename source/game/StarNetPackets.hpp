@@ -14,6 +14,7 @@
 #include "StarWiring.hpp"
 #include "StarClientContext.hpp"
 #include "StarSystemWorld.hpp"
+#include "StarNetCompatibility.hpp"
 
 namespace Star {
 
@@ -116,10 +117,16 @@ enum class PacketType : uint8_t {
 };
 extern EnumMap<PacketType> const PacketTypeNames;
 
+enum class NetCompressionMode : uint8_t {
+  None,
+  Zstd
+};
+extern EnumMap<NetCompressionMode> const NetCompressionModeNames;
+
 enum class PacketCompressionMode : uint8_t {
   Disabled,
-  Enabled,
-  Automatic
+  Automatic,
+  Enabled
 };
 
 struct Packet {
@@ -162,12 +169,14 @@ struct ProtocolRequestPacket : PacketBase<PacketType::ProtocolRequest> {
 };
 
 struct ProtocolResponsePacket : PacketBase<PacketType::ProtocolResponse> {
-  ProtocolResponsePacket(bool allowed = false);
+  ProtocolResponsePacket(bool allowed = false, Json info = {});
 
   void read(DataStream& ds) override;
+  void writeLegacy(DataStream& ds) const override;
   void write(DataStream& ds) const override;
 
   bool allowed;
+  Json info;
 };
 
 struct ServerDisconnectPacket : PacketBase<PacketType::ServerDisconnect> {
@@ -302,7 +311,7 @@ struct ClientConnectPacket : PacketBase<PacketType::ClientConnect> {
   ClientConnectPacket();
   ClientConnectPacket(ByteArray assetsDigest, bool allowAssetsMismatch, Uuid playerUuid, String playerName,
       String playerSpecies, WorldChunks shipChunks, ShipUpgrades shipUpgrades, bool introComplete,
-      String account);
+      String account, Json info = {});
 
   void readLegacy(DataStream& ds) override;
   void read(DataStream& ds) override;
@@ -406,7 +415,7 @@ struct WorldStartPacket : PacketBase<PacketType::WorldStart> {
   bool respawnInWorld;
   HashMap<DungeonId, float> dungeonIdGravity;
   HashMap<DungeonId, bool> dungeonIdBreathable;
-  Set<DungeonId> protectedDungeonIds;
+  StableHashSet<DungeonId> protectedDungeonIds;
   Json worldProperties;
   ConnectionId clientId;
   bool localInterpolationMode;

@@ -52,6 +52,11 @@ private:
     String account;
     String password;
   };
+  
+  struct PostProcessLayer {
+    List<String> effects;
+    unsigned passes;
+  };
 
   void renderReload();
 
@@ -98,6 +103,8 @@ private:
   WorldPainterPtr m_worldPainter;
   WorldRenderData m_renderData;
   MainInterfacePtr m_mainInterface;
+  
+  List<PostProcessLayer> m_postProcessLayers;
 
   // Valid if main app state == SinglePlayer
   UniverseServerPtr m_universeServer;
@@ -108,7 +115,7 @@ private:
   int m_cameraOffsetDownTicks = 0;
   Vec2F m_cameraPositionSmoother;
   Vec2F m_cameraSmoothDelta;
-  int m_cameraZoomDirection;
+  int m_cameraZoomDirection = 0;
 
   int m_minInterfaceScale = 2;
   int m_maxInterfaceScale = 3;
@@ -121,6 +128,7 @@ private:
 
   Maybe<PendingMultiPlayerConnection> m_pendingMultiPlayerConnection;
   Maybe<HostAddressWithPort> m_currentRemoteJoin;
+  int64_t m_timeSinceJoin = 0;
 };
 
 }

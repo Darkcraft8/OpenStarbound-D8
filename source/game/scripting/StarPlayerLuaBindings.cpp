@@ -117,6 +117,9 @@ LuaCallbacks LuaBindings::makePlayerCallbacks(Player* player) {
     player->setPersonality(parsePersonality(newPersonality, personalityConfig));
   });
 
+  callbacks.registerCallback(   "favoriteColor", [player]()            { return player->favoriteColor();  });
+  callbacks.registerCallback("setFavoriteColor", [player](Color color) { player->setFavoriteColor(color); });
+
   callbacks.registerCallback(   "mode", [player]()                       { return PlayerModeNames.getRight(player->modeType());    });
   callbacks.registerCallback("setMode", [player](String const& modeName) { player->setModeType(PlayerModeNames.getLeft(modeName)); });
 
@@ -224,6 +227,10 @@ LuaCallbacks LuaBindings::makePlayerCallbacks(Player* player) {
   callbacks.registerCallback("currentEmote", [player]() {
     auto currentEmote = player->currentEmote();
     return luaTupleReturn(HumanoidEmoteNames.getRight(currentEmote.first), currentEmote.second);
+  });
+
+  callbacks.registerCallback("currentState", [player]() {
+    return Player::StateNames.getRight(player->currentState());
   });
 
   callbacks.registerCallback("aimPosition", [player]() { return player->aimPosition(); });

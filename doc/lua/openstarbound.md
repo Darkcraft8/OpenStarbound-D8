@@ -76,7 +76,9 @@ Returns the asset source path of an asset, or nil if the asset doesn't exist. If
 Without metadata: Returns an array with all the asset source paths.
 With metadata: Returns a table, key/value being source path/metadata.
 
-#### `?` root.assetImage(`String` image)
+#### `Image` root.assetImage(`String` image)
+
+#### `Json` root.assetFrames(`String` path)
 
 *TODO*
 
@@ -232,6 +234,26 @@ Sets the player's hair directives.
 
 ---
 
+#### `String` player.facialHair()
+
+Returns the player's facial hair type. Same as player.facialHairType?
+
+#### `void` player.setFacialHair(`String` facialHairGroup, `String` facialHairType, `String` facialHairDirectives)
+
+Sets the player's facial hair group, type, and directives.
+
+---
+
+#### `String` player.facialHairType()
+
+Returns the player's facial hair type.
+
+#### `void` player.setFacialHairType(`String` facialHairType)
+
+Sets the player's facial hair type.
+
+---
+
 #### `String` player.facialHairGroup()
 
 Returns the player's facial hair group.
@@ -239,16 +261,6 @@ Returns the player's facial hair group.
 #### `void` player.setFacialHairGroup(`String` facialHairGroup)
 
 Sets the player's facial hair group.
-
----
-
-#### `String` player.facialHair()
-
-Returns the player's facial hair.
-
-#### `void` player.setFacialHair(`String` facialHair)
-
-Sets the player's facial hair.
 
 ---
 
@@ -266,19 +278,9 @@ Sets the player's facial hair directives.
 
 Returns the player's facial mask group.
 
-#### `void` player.setFacialMask(`String` facialMask)
+#### `void` player.setFacialMask(`String` facialMaskGroup, `String` facialMaskType, `String` facialMaskDirectives)
 
-Sets the player's facial mask.
-
----
-
-#### `String` player.facialMaskType()
-
-Returns the player's facial mask type.
-
-#### `void` player.setFacialMaskType(`String` facialMaskType)
-
-Sets the player's facial mask type.
+Sets the player's facial mask group, type, and directives.
 
 ---
 
@@ -299,6 +301,17 @@ Returns the player's mode.
 #### `void` player.setMode(`String` mode)
 
 Sets the player's mode. **mode** must be either `"casual"`, `"survival"` or `"hardcore"`.
+
+---
+
+#### `Color` player.favoriteColor()
+
+Returns the player's favorite color.
+It is used for the beam shown when wiring, placing, and highlighting with beam-tools (Matter Manipulator).
+
+#### `void` player.setFavoriteColor(`Color` color)
+
+Sets the player's favorite color. **color** can have an optional fourth value for transparency.
 
 ---
 
@@ -350,7 +363,7 @@ Makes the player say a string.
 
 Returns the specific humanoid identity of the player, containing information such as hair style and idle pose.
 
-#### `void` player.humanoidIdentity(`Json` humanoidIdentity)
+#### `void` player.setHumanoidIdentity(`Json` humanoidIdentity)
 
 Sets the specific humanoid identity of the player.
 

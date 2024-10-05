@@ -15,6 +15,7 @@ SET (star_extern_HEADERS
     fmt/printf.h
     fmt/ranges.h
     fmt/std.h
+    fast_float.h
     lauxlib.h
     lua.h
     lua.hpp
@@ -69,5 +70,16 @@ SET (star_extern_SOURCES
     lua/lvm.c
     lua/lzio.c
   )
+
+  
+IF (STAR_USE_RPMALLOC)
+  SET(star_extern_HEADERS ${star_extern_HEADERS}
+    rpmalloc.h
+    rpnew.h
+  )
+  SET(star_extern_SOURCES ${star_extern_SOURCES}
+    rpmalloc.c
+  )
+ENDIF()
 
 ADD_LIBRARY (star_extern OBJECT ${star_extern_SOURCES} ${star_extern_HEADERS})

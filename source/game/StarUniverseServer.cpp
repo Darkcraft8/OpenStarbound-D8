@@ -673,7 +673,6 @@ void UniverseServer::updateShips() {
         Json jOldShipLevel = shipWorld->getProperty("ship.level");
         unsigned newShipLevel = min<unsigned>(speciesShips.size() - 1, newShipUpgrades.shipLevel);
 
-
         if (jOldShipLevel.isType(Json::Type::Int)) {
           auto oldShipLevel = jOldShipLevel.toUInt();
           if (oldShipLevel < newShipLevel) {
@@ -835,7 +834,10 @@ void UniverseServer::warpPlayers() {
           // Checking the spawn target validity then adding the client is not
           // perfect, it can still become invalid in between, if we fail at
           // adding the client we need to warp them back.
-          if (toWorld && toWorld->addClient(clientId, warpToWorld.target, !clientContext->remoteAddress(), clientContext->canBecomeAdmin())) {
+          if (toWorld && toWorld->addClient(clientId, warpToWorld.target,
+            !clientContext->remoteAddress(),
+            clientContext->canBecomeAdmin(),
+            clientContext->netRules())) {
             clientContext->setPlayerWorld(toWorld);
             m_chatProcessor->joinChannel(clientId, printWorldId(warpToWorld.world));
 
@@ -1540,6 +1542,7 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   int clientWaitLimit = assets->json("/universe_server.config:clientWaitLimit").toInt();
   String serverAssetsMismatchMessage = assets->json("/universe_server.config:serverAssetsMismatchMessage").toString();
   String clientAssetsMismatchMessage = assets->json("/universe_server.config:clientAssetsMismatchMessage").toString();
+  auto connectionSettings = configuration->get("connectionSettings");
 
   RecursiveMutexLocker mainLocker(m_mainLock, false);
 
@@ -1549,8 +1552,9 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
     Logger::warn("UniverseServer: client connection aborted, expected ProtocolRequestPacket");
     return;
   }
-  
+
   bool legacyClient = protocolRequest->compressionMode() != PacketCompressionMode::Enabled;
+  connection.packetSocket().setLegacy(legacyClient);
 
   auto protocolResponse = make_shared<ProtocolResponsePacket>();
   protocolResponse->setCompressionMode(PacketCompressionMode::Enabled); // Signal that we're OpenStarbound
@@ -1565,13 +1569,25 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
     return;
   }
 
+  bool useCompressionStream = false;
   protocolResponse->allowed = true;
+  if (!legacyClient) {
+    auto compressionName = connectionSettings.getString("compression", "None");
+    auto compressionMode = NetCompressionModeNames.maybeLeft(compressionName).value(NetCompressionMode::None);
+    useCompressionStream = compressionMode == NetCompressionMode::Zstd;
+    protocolResponse->info = JsonObject{
+      {"compression", NetCompressionModeNames.getRight(compressionMode)},
+      {"openProtocolVersion", OpenProtocolVersion}
+    };
+  }
   connection.pushSingle(protocolResponse);
   connection.sendAll(clientWaitLimit);
-  connection.setLegacy(legacyClient);
+
+  if (auto compressedSocket = as<CompressedPacketSocket>(&connection.packetSocket()))
+    compressedSocket->setCompressionStreamEnabled(useCompressionStream);
 
   String remoteAddressString = remoteAddress ? toString(*remoteAddress) : "local";
-  Logger::info("UniverseServer: Awaiting connection info from {}, {} client", remoteAddressString, legacyClient ? "Starbound" : "OpenStarbound");
+  Logger::info("UniverseServer: Awaiting connection info from {} ({} client)", remoteAddressString, legacyClient ? "vanilla" : "custom");
 
   connection.receiveAny(clientWaitLimit);
   auto clientConnect = as<ClientConnectPacket>(connection.pullSingle());
@@ -1584,7 +1600,6 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   }
 
   bool administrator = false;
-
   String accountString = !clientConnect->account.empty() ? strf("'{}'", clientConnect->account) : "<anonymous>";
 
   auto connectionFail = [&](String message) {
@@ -1656,14 +1671,27 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
     }
   }
 
-  Logger::info("UniverseServer: Logged in account '{}' as player '{}' from address {}",
-      accountString, clientConnect->playerName, remoteAddressString);
+  String connectionLog = strf("UniverseServer: Logged in account '{}' as player '{}' from address {}",
+    accountString, clientConnect->playerName, remoteAddressString);
+
+  NetCompatibilityRules netRules(legacyClient ? LegacyVersion : 1);
+  if (Json& info = clientConnect->info) {
+    if (auto openProtocolVersion = info.optUInt("openProtocolVersion"))
+      netRules.setVersion(*openProtocolVersion);
+    if (Json brand = info.get("brand", "custom"))
+      connectionLog += strf(" ({} client)", brand.toString());
+    if (info.getBool("legacy", false))
+      connection.packetSocket().setLegacy(legacyClient = true);
+  }
+  Logger::log(LogLevel::Info, connectionLog.utf8Ptr());
+
+
 
   mainLocker.lock();
   WriteLocker clientsLocker(m_clientsLock);
   if (auto clashId = getClientForUuid(clientConnect->playerUuid)) {
     if (administrator) {
-      doDisconnection(*clashId, "Duplicate Uuid joined and is Administrator so has priority.");
+      doDisconnection(*clashId, "Duplicate UUID joined and is Administrator so has priority.");
     } else {
       connectionFail("Duplicate player UUID");
       return;
@@ -1676,7 +1704,7 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   }
 
   ConnectionId clientId = m_clients.nextId();
-  auto clientContext = make_shared<ServerClientContext>(clientId, remoteAddress, clientConnect->playerUuid,
+  auto clientContext = make_shared<ServerClientContext>(clientId, remoteAddress, netRules, clientConnect->playerUuid,
       clientConnect->playerName, clientConnect->playerSpecies, administrator, clientConnect->shipChunks);
   m_clients.add(clientId, clientContext);
   m_connectionServer->addConnection(clientId, std::move(connection));
@@ -1760,8 +1788,12 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   clientFlyShip(clientId, clientContext->shipCoordinate().location(), clientContext->shipLocation());
   Logger::info("UniverseServer: Client {} connected", clientContext->descriptiveName());
   
+  ReadLocker m_clientsReadLocker(m_clientsLock);
   auto players = static_cast<uint16_t>(m_clients.size());
-  for (auto clientId : m_clients.keys()) {
+  auto clients = m_clients.keys();
+  m_clientsReadLocker.unlock();
+
+  for (auto clientId : clients) {
     m_connectionServer->sendPackets(clientId, {
         make_shared<ServerInfoPacket>(players, static_cast<uint16_t>(m_maxPlayers))
       });  
@@ -2003,10 +2035,21 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
         shipWorld->setProperty("ship.maxFuel", currentUpgrades.maxFuel);
         shipWorld->setProperty("ship.crewSize", currentUpgrades.crewSize);
         shipWorld->setProperty("ship.fuelEfficiency", currentUpgrades.fuelEfficiency);
+        shipWorld->setProperty("ship.epoch", Time::timeSinceEpoch());
+      }
+
+      auto shipClock = make_shared<Clock>();
+      auto shipTime = shipWorld->getProperty("ship.epoch");
+      if (!shipTime.canConvert(Json::Type::Float)) {
+        auto now = Time::timeSinceEpoch();
+        shipWorld->setProperty("ship.epoch", now);
+      } else {
+        shipClock->setTime(Time::timeSinceEpoch() - shipTime.toDouble());
       }
 
       shipWorld->setUniverseSettings(m_universeSettings);
-      shipWorld->setReferenceClock(universeClock);
+      shipWorld->setReferenceClock(shipClock);
+      shipClock->start();
 
       if (auto systemWorld = clientContext->systemWorld())
         shipWorld->setOrbitalSky(systemWorld->clientSkyParameters(clientContext->clientId()));

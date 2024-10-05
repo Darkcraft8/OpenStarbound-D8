@@ -108,6 +108,7 @@ public:
   bool mainPlayerDead() const;
   void reviveMainPlayer();
   bool respawnInWorld() const;
+  void setRespawnInWorld(bool respawnInWorld);
 
   void removeEntity(EntityId entityId, bool andDie);
 
@@ -175,6 +176,9 @@ public:
 
   typedef std::function<bool(PlayerPtr, StringView)> BroadcastCallback;
   BroadcastCallback& broadcastCallback();
+
+
+
 private:
   static const float DropDist;
 
@@ -363,7 +367,7 @@ private:
 
   HashMap<DungeonId, float> m_dungeonIdGravity;
   HashMap<DungeonId, bool> m_dungeonIdBreathable;
-  Set<DungeonId> m_protectedDungeonIds;
+  StableHashSet<DungeonId> m_protectedDungeonIds;
 
   HashMap<String, List<RpcPromiseKeeper<Vec2F>>> m_findUniqueEntityResponses;
   HashMap<Uuid, RpcPromiseKeeper<Json>> m_entityMessageResponses;
